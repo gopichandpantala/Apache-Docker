@@ -1,0 +1,66 @@
+pipeline {
+    agent any
+
+    environment {
+        ECR_REPO = 'my-httpd-repo'
+        ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        IMAGE_NAME = 'apache'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git credentialsId: 'Github-creds', url: 'https://github.com/gopichandpantala/Apache-Docker.git', branch: 'master'
+            }
+        }
+
+        stage('Build and Push to ECR') {
+            steps {
+                script {
+                    // Build Docker image with Jenkins build number as tag
+                    sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
+                    
+                    // Authenticate to ECR
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}/${ECR_REPO}
+                    """
+                    
+                    // Tag Docker image
+                    sh "docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${ECR_REGISTRY}/${ECR_REPO}:${BUILD_NUMBER}"
+                    
+                    // Push Docker image to ECR
+                    sh "docker push ${ECR_REGISTRY}/${ECR_REPO}:${BUILD_NUMBER}"
+                    
+                    // Clean up local Docker images
+                    sh "docker rmi -f ${IMAGE_NAME}:${BUILD_NUMBER}"
+                    sh "docker rmi -f ${ECR_REGISTRY}/${ECR_REPO}:${BUILD_NUMBER}"
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                def mailSubject = "Build ${currentBuild.fullDisplayName} Status: ${currentBuild.currentResult}"
+                def mailBody = "Build ${currentBuild.fullDisplayName} finished with status: ${currentBuild.currentResult}"
+                emailext (
+                    to: 'gopichand.pantala@gmail.com',
+                    subject: mailSubject,
+                    body: mailBody
+                )
+            }
+        }
+        failure {
+            script {
+                def mailSubject = "Build ${currentBuild.fullDisplayName} Failed"
+                def mailBody = "Build ${currentBuild.fullDisplayName} failed with status: ${currentBuild.currentResult}. Check the logs for more details."
+                emailext (
+                    to: 'gopichand.pantala@gmail.com',
+                    subject: mailSubject,
+                    body: mailBody
+                )
+            }
+        }
+    }
+}
